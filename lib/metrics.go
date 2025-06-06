@@ -3,6 +3,7 @@ package vegeta
 import (
 	"strconv"
 	"time"
+	"math"
 
 	"github.com/influxdata/tdigest"
 )
@@ -40,9 +41,21 @@ type Metrics struct {
 	StatusCodes map[string]int `json:"status_codes"`
 	// Errors is a set of unique errors returned by the targets during the attack.
 	Errors []string `json:"errors"`
+	// List of all durations
+	LatencyList []time.Duration
 
 	errors  map[string]struct{}
 	success uint64
+}
+
+func ComputeStandardDeviation(latencyList []time.Duration, mean float64) time.Duration {
+	// https://www.tutorialspoint.com/golang-program-to-calculate-standard-deviation
+	var sd float64
+	for j := 0; j < len(latencyList); j++ {
+		sd += math.Pow(float64(latencyList[j])-mean, 2)
+	}
+	sd = math.Sqrt(sd/float64(len(latencyList)))
+	return time.Duration(sd)
 }
 
 // Add implements the Add method of the Report interface by adding the given
@@ -80,6 +93,8 @@ func (m *Metrics) Add(r *Result) {
 		}
 	}
 
+	m.LatencyList = append(m.LatencyList, r.Latency)
+
 	if m.Histogram != nil {
 		m.Histogram.Add(r)
 	}
@@ -108,6 +123,7 @@ func (m *Metrics) Close() {
 	m.BytesOut.Mean = float64(m.BytesOut.Total) / float64(m.Requests)
 	m.Success = float64(m.success) / float64(m.Requests)
 	m.Latencies.Mean = time.Duration(float64(m.Latencies.Total) / float64(m.Requests))
+	m.Latencies.StdDev = ComputeStandardDeviation(m.LatencyList, float64(m.Latencies.Mean))
 	m.Latencies.P50 = m.Latencies.Quantile(0.50)
 	m.Latencies.P90 = m.Latencies.Quantile(0.90)
 	m.Latencies.P95 = m.Latencies.Quantile(0.95)
@@ -146,6 +162,8 @@ type LatencyMetrics struct {
 	Max time.Duration `json:"max"`
 	// Min is the minimum observed request latency.
 	Min time.Duration `json:"min"`
+	// StdDev is the standard deviation of the observed request latencies
+	StdDev time.Duration `json:"std_dev"`
 
 	estimator estimator
 }
